@@ -470,21 +470,21 @@ function bestLift(name){
 
 /* ---------- 5. LOAD STATS --------------------------------------- */
 function weekKey(d){ return iso(mondayOf(d)); }
+function weekStats(mon){
+  const sun=addDays(mon,7);
+  const acts=S.activities.filter(a=>{const d=new Date(a.date);return d>=mon&&d<sun;});
+  const str=S.strength.filter(s=>{const d=new Date(s.date);return d>=mon&&d<sun;});
+  const strSessions=[...new Set(str.map(s=>s.date))];
+  return {
+    week:iso(mon),
+    hours: acts.reduce((t,a)=>t+a.sec/3600,0) + strSessions.length*0.75,
+    sessions: acts.length + strSessions.length,
+    km: acts.filter(a=>a.sport==='run').reduce((t,a)=>t+(a.km||0),0)
+  };
+}
 function hoursByWeek(n=8){
   const out=[];
-  for(let i=n-1;i>=0;i--){
-    const mon=mondayOf(addDays(today(),-7*i));
-    const sun=addDays(mon,7);
-    const acts=S.activities.filter(a=>{const d=new Date(a.date);return d>=mon&&d<sun;});
-    const str=S.strength.filter(s=>{const d=new Date(s.date);return d>=mon&&d<sun;});
-    const strSessions=[...new Set(str.map(s=>s.date))];
-    out.push({
-      week:iso(mon),
-      hours: acts.reduce((t,a)=>t+a.sec/3600,0) + strSessions.length*0.75,
-      sessions: acts.length + strSessions.length,
-      km: acts.filter(a=>a.sport==='run').reduce((t,a)=>t+(a.km||0),0)
-    });
-  }
+  for(let i=n-1;i>=0;i--) out.push(weekStats(mondayOf(addDays(today(),-7*i))));
   return out;
 }
 function acuteChronic(){
@@ -615,7 +615,9 @@ const SKI = {
 function buildWeek(monday){
   const p=S.profile;
   const winter=isWinter(monday);
-  const weeksOut = p.raceDate ? Math.floor(daysTo(p.raceDate)/7) : null;
+  // Relative to the week being built, not real-time "today" — otherwise every
+  // week you navigate to shows today's phase instead of its own.
+  const weeksOut = p.raceDate ? Math.floor((new Date(p.raceDate)-new Date(monday))/(7*86400000)) : null;
   const phase = phaseFor(weeksOut);
   const weekIdx = Math.floor(new Date(monday)/604800000);   // stable rotation seed
 
@@ -684,6 +686,7 @@ function sessionKey(s){ return s.date+'|'+s.name; }
 
 /* ---------- 8. VIEWS -------------------------------------------- */
 let TAB='week';
+let WEEK_OFFSET=0;   // weeks from the real current week, for browsing the Week tab
 const el=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
@@ -695,16 +698,19 @@ function renderHeader(week){
 }
 
 function viewWeek(){
-  const week=buildWeek(mondayOf(today()));
+  const monday=mondayOf(addDays(today(),7*WEEK_OFFSET));
+  const week=buildWeek(monday);
   const todayISO=iso(today());
+  const isCurrent=WEEK_OFFSET===0;
   const sessions=allSessions(week);
   const totalMin=sessions.reduce((t,s)=>t+s.minutes,0);
   const maxMin=Math.max(60,...week.days.map(d=>[d.main,...d.extras].reduce((t,s)=>t+s.minutes,0)));
   const avgLine = (S.profile.weeklyHours*60/5);  // the "Limit" line: target spread over 5 training days
 
   // What actually happened this week, so a manually logged workout shows up
-  // next to the plan rather than only inside Metrics/Log.
-  const wkAct = hoursByWeek(1)[0];
+  // next to the plan rather than only inside Metrics/Log. Computed for the
+  // week being viewed, not always the real current week.
+  const wkAct = weekStats(monday);
   const weekStart=new Date(week.monday), weekEnd=addDays(weekStart,7);
   const actsByDate={};
   S.activities.forEach(a=>{
@@ -762,13 +768,24 @@ function viewWeek(){
     return planned+logged;
   }).join('');
 
+  const weekLabel = WEEK_OFFSET===0?'this week':WEEK_OFFSET===1?'next week':WEEK_OFFSET===-1?'last week':
+    WEEK_OFFSET>0?`in ${WEEK_OFFSET} weeks`:`${-WEEK_OFFSET} weeks ago`;
+  const loggedLabel = WEEK_OFFSET<0 ? 'h logged' : 'h logged so far';
+
   return `
   <div class="card">
-    <div class="row between" style="align-items:flex-start">
+    <div class="row between" style="align-items:center">
+      <button class="btn ghost sm" id="btnWeekPrev" aria-label="Previous week">‹</button>
+      <div style="text-align:center">
+        <div class="lab">week of ${week.monday} · ${weekLabel}</div>
+      </div>
+      <button class="btn ghost sm" id="btnWeekNext" aria-label="Next week">›</button>
+    </div>
+    ${!isCurrent?`<div style="text-align:center;margin-top:8px"><button class="btn ghost sm" id="btnWeekToday">Back to this week</button></div>`:''}
+    <div class="row between" style="align-items:flex-start;margin-top:${isCurrent?'0':'12px'}">
       <div>
-        <div class="lab">week of ${week.monday}</div>
         <div class="big num">${(totalMin/60).toFixed(1)}<span style="font-size:14px;font-weight:400" class="mut"> h planned</span></div>
-        <div class="small mut" style="margin-top:2px">${wkAct.hours.toFixed(1)} h logged so far</div>
+        ${(isCurrent||wkAct.hours>0)?`<div class="small mut" style="margin-top:2px">${wkAct.hours.toFixed(1)} ${loggedLabel}</div>`:''}
       </div>
       <div style="text-align:right">
         <div class="lab">target</div>
@@ -784,7 +801,7 @@ function viewWeek(){
     </div>
   </div>
 
-  <div class="card">
+  ${isCurrent?`<div class="card">
     <div class="row between"><h2>Today</h2>
       <button class="btn ghost sm" id="btnCheckin">${ck?'Edit check-in':'Check in'}</button></div>
     ${ready?`<div style="margin-top:8px"><span class="chip ${ready.band==='green'?'ok':ready.band==='amber'?'warn':'hot'}">readiness ${ready.score}/20</span>
@@ -798,7 +815,7 @@ function viewWeek(){
         ${wx?`<div class="small mut" style="margin-top:8px">${Math.round(wx.tmin)}–${Math.round(wx.tmax)}°C · ${Math.round(wx.wind/3.6)} m/s · ${wx.rain.toFixed(1)} mm</div>`:''}
         ${weatherAdvice(wx,s).map(a=>`<div class="small" style="margin-top:6px">· ${esc(a)}</div>`).join('')}`;
     })():''}
-  </div>
+  </div>`:''}
 
   <div class="card">
     <div class="row between"><h2>Sessions</h2><button class="btn ghost sm" id="btnPaces">Paces</button></div>
@@ -1032,7 +1049,8 @@ function closeSheet(){ el('sheet').classList.remove('open'); el('sheetBg').class
 el('sheetBg').onclick=closeSheet;
 
 function sheetSession(key){
-  const week=buildWeek(mondayOf(today()));
+  const date=key.split('|')[0];
+  const week=buildWeek(mondayOf(date));
   const s=allSessions(week).find(x=>sessionKey(x)===key);
   if(!s) return;
   const best=currentVDOT(); const p=best?paces(best.adj):null;
@@ -1047,13 +1065,19 @@ function sheetSession(key){
       <span class="chip">${s.minutes} min</span>
     </div>
     <div class="card">${s.body.map(b=>`<div style="padding:5px 0;border-bottom:1px solid var(--rule)">${esc(b)}</div>`).join('')}</div>
-    ${p&&(s.intensity==='quality'||s.intensity==='long')?`<div class="card"><h3>Paces today</h3>
-      <table><tbody>
-        <tr><td>Easy / warm-up</td><td class="n">${fmtPace(p.easy[1])}–${fmtPace(p.easy[0])}</td></tr>
-        <tr><td>Threshold</td><td class="n">${fmtPace(p.threshold)}</td></tr>
-        <tr><td>Interval</td><td class="n">${fmtPace(p.interval)}</td></tr>
-        <tr><td>Goal HM</td><td class="n">${fmtPace(S.profile.goalTime/(S.profile.raceDist/1000))}</td></tr>
-      </tbody></table></div>`:''}
+    ${p&&(s.intensity==='quality'||s.intensity==='long')?(()=>{
+      // Long runs are steady/marathon-pace work, never threshold or interval —
+      // those rows only belong on quality days.
+      const rows=[`<tr><td>Easy${s.intensity==='long'?'':' / warm-up'}</td><td class="n">${fmtPace(p.easy[1])}–${fmtPace(p.easy[0])}</td></tr>`];
+      if(s.intensity==='quality'){
+        rows.push(`<tr><td>Threshold</td><td class="n">${fmtPace(p.threshold)}</td></tr>`);
+        rows.push(`<tr><td>Interval</td><td class="n">${fmtPace(p.interval)}</td></tr>`);
+      } else {
+        rows.push(`<tr><td>Marathon</td><td class="n">${fmtPace(p.marathon)}</td></tr>`);
+      }
+      rows.push(`<tr><td>Goal HM</td><td class="n">${fmtPace(S.profile.goalTime/(S.profile.raceDist/1000))}</td></tr>`);
+      return `<div class="card"><h3>Paces today</h3><table><tbody>${rows.join('')}</tbody></table></div>`;
+    })():''}
     ${weatherAdvice(wx,s).length?`<div class="card"><h3>Conditions</h3>${weatherAdvice(wx,s).map(a=>`<div class="small" style="padding:4px 0">· ${esc(a)}</div>`).join('')}</div>`:''}
     <div class="grid2" style="margin-top:12px">
       <button class="btn" id="sDone">${done?'Mark not done':'Mark done'}</button>
@@ -1272,11 +1296,14 @@ async function askClaude(msg){
 function wire(){
   document.querySelectorAll('[data-sess]').forEach(b=>b.onclick=()=>sheetSession(b.dataset.sess));
   document.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{
-    const week=buildWeek(mondayOf(today()));
+    const week=buildWeek(mondayOf(b.dataset.day));
     const d=week.days.find(x=>x.main.date===b.dataset.day);
     if(d) sheetSession(sessionKey(d.main));
   });
   const on=(id,fn)=>{const e=el(id); if(e) e.onclick=fn;};
+  on('btnWeekPrev',()=>{WEEK_OFFSET--; render();});
+  on('btnWeekNext',()=>{WEEK_OFFSET++; render();});
+  on('btnWeekToday',()=>{WEEK_OFFSET=0; render();});
   on('btnCheckin',sheetCheckin); on('btnPaces',sheetPaces);
   on('btnLift',sheetLift); on('btnLift2',sheetLift);
   on('btnManual',sheetManual); on('btnDebrief',()=>sheetDebrief(null));

@@ -702,6 +702,20 @@ function viewWeek(){
   const maxMin=Math.max(60,...week.days.map(d=>[d.main,...d.extras].reduce((t,s)=>t+s.minutes,0)));
   const avgLine = (S.profile.weeklyHours*60/5);  // the "Limit" line: target spread over 5 training days
 
+  // What actually happened this week, so a manually logged workout shows up
+  // next to the plan rather than only inside Metrics/Log.
+  const wkAct = hoursByWeek(1)[0];
+  const weekStart=new Date(week.monday), weekEnd=addDays(weekStart,7);
+  const actsByDate={};
+  S.activities.forEach(a=>{
+    const d=new Date(a.date);
+    if(d>=weekStart&&d<weekEnd) (actsByDate[a.date]=actsByDate[a.date]||[]).push({...a,kind:'activity'});
+  });
+  S.strength.forEach(a=>{
+    const d=new Date(a.date);
+    if(d>=weekStart&&d<weekEnd) (actsByDate[a.date]=actsByDate[a.date]||[]).push({...a,kind:'strength'});
+  });
+
   const bars=week.days.map(d=>{
     const mins=[d.main,...d.extras].reduce((t,s)=>t+s.minutes,0);
     const h=Math.max(3, Math.round(mins/maxMin*100));
@@ -717,7 +731,7 @@ function viewWeek(){
   const wx=wxForDate(todayISO);
 
   const list=week.days.map(d=>{
-    return [d.main,...d.extras].filter(s=>s.minutes>0||s.intensity==='rest').map(s=>{
+    const planned=[d.main,...d.extras].filter(s=>s.minutes>0||s.intensity==='rest').map(s=>{
       const done=!!S.doneSessions[sessionKey(s)];
       const isT=s.date===todayISO;
       return `<button class="sess ${done?'done':''}" data-sess="${esc(sessionKey(s))}">
@@ -730,6 +744,22 @@ function viewWeek(){
         <div class="meta"><div class="num">${s.minutes||'—'}</div><div class="tiny mut">min</div></div>
       </button>`;
     }).join('');
+    const logged=(actsByDate[d.main.date]||[]).map(a=>{
+      const label = a.kind==='strength' ? `Strength · ${a.lift}` : (a.title || a.sport);
+      const detail = a.kind==='strength' ? `${a.kg} kg × ${a.reps}`
+        : [a.km?a.km.toFixed(1)+' km':null, a.hrAvg?a.hrAvg+' bpm avg':null].filter(Boolean).join(' · ');
+      const mins = a.kind==='strength' ? null : Math.round(a.sec/60);
+      return `<div class="sess">
+        <div class="tick" style="background:var(--ok)"></div>
+        <div>
+          <div class="lab" style="color:var(--ok)">Logged</div>
+          <div class="name" style="font-weight:600">${esc(label)}</div>
+          <div class="small mut">${esc(detail)}</div>
+        </div>
+        <div class="meta"><div class="num">${mins??'—'}</div><div class="tiny mut">${mins?'min':''}</div></div>
+      </div>`;
+    }).join('');
+    return planned+logged;
   }).join('');
 
   return `
@@ -738,6 +768,7 @@ function viewWeek(){
       <div>
         <div class="lab">week of ${week.monday}</div>
         <div class="big num">${(totalMin/60).toFixed(1)}<span style="font-size:14px;font-weight:400" class="mut"> h planned</span></div>
+        <div class="small mut" style="margin-top:2px">${wkAct.hours.toFixed(1)} h logged so far</div>
       </div>
       <div style="text-align:right">
         <div class="lab">target</div>
@@ -749,7 +780,7 @@ function viewWeek(){
         <div class="bars">${bars}</div>
         <div class="limit" style="bottom:${Math.min(106,Math.round(avgLine/maxMin*110))}px"><span>the limit</span></div>
       </div>
-      <div class="days">${week.days.map(d=>`<div class="${d.main.date===todayISO?'today':''}">${DAYLETTER[d.main.dow]}</div>`).join('')}</div>
+      <div class="days">${week.days.map(d=>`<div class="${d.main.date===todayISO?'today':''}">${DAYLETTER[d.main.dow]}${actsByDate[d.main.date]?'<div style="width:4px;height:4px;border-radius:50%;background:var(--ok);margin:3px auto 0"></div>':''}</div>`).join('')}</div>
     </div>
   </div>
 
